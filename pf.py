@@ -29,7 +29,7 @@ __copyright__ = "Copyright 2015 Tom Brown (FIAS), Jonas Hoersch (FIAS), GNU GPL 
 
 
 
-from scipy.sparse import csr_matrix, csc_matrix, hstack as shstack, vstack as svstack
+from scipy.sparse import issparse, csr_matrix, csc_matrix, hstack as shstack, vstack as svstack
 
 from numpy import r_, ones, zeros, newaxis
 from scipy.sparse.linalg import spsolve
@@ -474,7 +474,13 @@ def calculate_PTDF(sub_network,verbose=True):
 
     I = csc_matrix((np.ones((n_pvpq)),(index,index)))
 
-    B_inverse = spsolve(sub_network.B[1:, 1:],I).toarray()
+    B_inverse = spsolve(sub_network.B[1:, 1:],I)
+
+    #exception for two-node networks, where B_inverse is a 1d array
+    if issparse(B_inverse):
+        B_inverse = B_inverse.toarray()
+    elif B_inverse.shape == (1,):
+        B_inverse = B_inverse.reshape((1,1))
 
     #add back in zeroes for slack
     B_inverse = np.hstack((np.zeros((n_pvpq,1)),B_inverse))

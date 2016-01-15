@@ -35,12 +35,13 @@ from pyomo.environ import ConcreteModel, Var, Objective, NonNegativeReals, Const
 
 from pyomo.opt import SolverFactory
 
-from .pf import calculate_dependent_values, find_slack_bus
+from .pf import calculate_dependent_values, find_slack_bus, find_bus_controls, calculate_B_H, calculate_PTDF
 
 from itertools import chain
 
 import pandas as pd
 
+from scipy.sparse.linalg import spsolve
 
 
 #this function is necessary because pyomo doesn't deal with NaNs gracefully
@@ -286,6 +287,38 @@ def define_controllable_branch_flows(network,snapshots):
 
 
 
+def define_nodal_balances(network,snapshots):
+
+    controllable_branches = network.controllable_branches
+
+    #create dictionary of inflow branches at each bus
+
+    inflows = {bus_name : [] for bus_name in network.buses.index}
+
+    for cb in controllable_branches.obj:
+        inflows[cb.bus0].append(((cb.__class__.__name__,cb.name),-1))
+        inflows[cb.bus1].append(((cb.__class__.__name__,cb.name),1))
+
+
+    def p_balance(model,bus_name,snapshot):
+
+        bus = network.buses.obj[bus_name]
+
+        p = sum(gen.sign*model.generator_p[gen.name,snapshot] for gen in bus.generators.obj)
+
+        p += sum(su.sign*model.storage_p_dispatch[su.name,snapshot] for su in bus.storage_units.obj)
+
+        p -= sum(su.sign*model.storage_p_store[su.name,snapshot] for su in bus.storage_units.obj)
+
+        p += sum(load.sign*load.p_set[snapshot] for load in bus.loads.obj)
+
+        p += sum(coeff*model.controllable_branch_p[ct,cn,snapshot] for (ct,cn),coeff in inflows[bus_name])
+
+        return p
+
+    network.model.power_balance = Expression(network.buses.index, snapshots, rule=p_balance)
+
+
 
 
 
@@ -308,12 +341,32 @@ def define_passive_branch_flows(network,snapshots):
     network.model.flow = Expression(list(passive_branches.index),snapshots,rule=flow)
 
 
+def define_passive_branch_flows_with_PTDF(network,snapshots):
+
+    passive_branches = network.passive_branches
+
+    for sub_network in network.sub_networks.obj:
+        find_bus_controls(sub_network,verbose=False)
+        if len(sub_network.branches) > 0:
+            calculate_B_H(sub_network,verbose=False)
+            calculate_PTDF(sub_network,verbose=False)
+
+        for i,branch in enumerate(sub_network.branches.obj):
+            branch._flow = {}
+            for snapshot in snapshots:
+                branch._flow[snapshot] = sum(sub_network.PTDF[i,j]*network.model.power_balance[bus_name,snapshot] for j,bus_name in enumerate(sub_network.buses_o.index))
+
+    def flow(model,branch_type,branch_name,snapshot):
+        branch = passive_branches.obj[branch_type,branch_name]
+        return branch._flow[snapshot]
+
+    network.model.flow = Expression(list(passive_branches.index),snapshots,rule=flow)
+
+
 def define_passive_branch_constraints(network,snapshots):
 
 
     passive_branches = network.passive_branches
-
-    extendable_branches = passive_branches[passive_branches.s_nom_extendable]
 
     def flow_upper(model,branch_type,branch_name,snapshot):
         branch = passive_branches.obj[branch_type,branch_name]
@@ -334,22 +387,17 @@ def define_passive_branch_constraints(network,snapshots):
     network.model.flow_lower = Constraint(list(passive_branches.index),snapshots,rule=flow_lower)
 
 
-def define_nodal_balances(network,snapshots):
+def define_nodal_balance_constraints(network,snapshots):
 
     passive_branches = network.passive_branches
-    controllable_branches = network.controllable_branches
 
     #create dictionary of inflow branches at each bus
 
-    inflows = {bus_name : {"controllable_branches" : [], "branches" : []} for bus_name in network.buses.index}
-
-    for cb in controllable_branches.obj:
-        inflows[cb.bus0]["controllable_branches"].append(((cb.__class__.__name__,cb.name),-1))
-        inflows[cb.bus1]["controllable_branches"].append(((cb.__class__.__name__,cb.name),1))
+    inflows = {bus_name : [] for bus_name in network.buses.index}
 
     for branch in passive_branches.obj:
-        inflows[branch.bus0]["branches"].append(((branch.__class__.__name__,branch.name),-1))
-        inflows[branch.bus1]["branches"].append(((branch.__class__.__name__,branch.name),1))
+        inflows[branch.bus0].append(((branch.__class__.__name__,branch.name),-1))
+        inflows[branch.bus1].append(((branch.__class__.__name__,branch.name),1))
 
 
 
@@ -357,23 +405,26 @@ def define_nodal_balances(network,snapshots):
 
         bus = network.buses.obj[bus_name]
 
-        p = sum(gen.sign*model.generator_p[gen.name,snapshot] for gen in bus.generators.obj)
+        p = model.power_balance[bus_name,snapshot]
 
-        p += sum(su.sign*model.storage_p_dispatch[su.name,snapshot] for su in bus.storage_units.obj)
-
-        p -= sum(su.sign*model.storage_p_store[su.name,snapshot] for su in bus.storage_units.obj)
-
-        p += sum(load.sign*load.p_set[snapshot] for load in bus.loads.obj)
-
-        p += sum(coeff*model.controllable_branch_p[ct,cn,snapshot] for (ct,cn),coeff in inflows[bus_name]["controllable_branches"])
-
-        p += sum(coeff*model.flow[bt,bn,snapshot] for (bt,bn),coeff in inflows[bus_name]["branches"])
+        p += sum(coeff*model.flow[bt,bn,snapshot] for (bt,bn),coeff in inflows[bus_name])
 
         #beware if the p above sums to an integer, the below will return True or False, inducing a bug
 
         return p == 0
 
-    network.model.power_balance = Constraint(network.buses.index, snapshots, rule=p_balance)
+    network.model.power_balance_constraint = Constraint(network.buses.index, snapshots, rule=p_balance)
+
+
+
+
+def define_sub_network_balance_constraints(network,snapshots):
+
+    def sn_balance(model,sn_name,snapshot):
+        sn = network.sub_networks.obj[sn_name]
+        return sum(model.power_balance[bus_name,snapshot] for bus_name in sn.buses_o.index) == 0
+
+    network.model.sub_network_balance_constraint = Constraint(network.sub_networks.index, snapshots, rule=sn_balance)
 
 
 
@@ -427,18 +478,25 @@ def extract_optimisation_results(network,snapshots):
             load.p[snapshot] = load.p_set[snapshot]
 
         for bus in network.buses.obj:
-            bus.v_ang[snapshot] = network.model.voltage_angles[bus.name,snapshot].value
 
             bus.p[snapshot] = sum(asset.sign*asset.p[snapshot] for asset in chain(bus.generators.obj,bus.loads.obj,bus.storage_units.obj))
 
-            bus.marginal_price[snapshot] = network.model.dual[network.model.power_balance[bus.name,snapshot]]
-
+            if network.dc_opf_formulation == "angles":
+                bus.v_ang[snapshot] = network.model.voltage_angles[bus.name,snapshot].value
+                bus.marginal_price[snapshot] = network.model.dual[network.model.power_balance_constraint[bus.name,snapshot]]
 
         for cb in network.controllable_branches.obj:
             cb.p0[snapshot] = network.model.controllable_branch_p[cb.__class__.__name__,cb.name,snapshot].value
             cb.p1[snapshot] = -cb.p0[snapshot]
             network.buses.p.loc[snapshot,cb.bus0] -= cb.p0[snapshot]
             network.buses.p.loc[snapshot,cb.bus1] -= cb.p1[snapshot]
+
+
+        if network.dc_opf_formulation == "ptdf":
+            for sn in network.sub_networks.obj:
+                network.buses.v_ang.loc[snapshot,sn.slack_bus] = 0.
+                if len(sn.pvpqs) > 0:
+                    network.buses.v_ang.loc[snapshot,sn.pvpqs.index] = spsolve(sn.B[1:, 1:], network.buses.p.loc[snapshot,sn.pvpqs.index])
 
 
         for branch in network.passive_branches.obj:
@@ -493,11 +551,20 @@ def network_lopf(network,snapshots=None,solver_name="glpk",verbose=True):
 
     define_controllable_branch_flows(network,snapshots)
 
-    define_passive_branch_flows(network,snapshots)
+    define_nodal_balances(network,snapshots)
+
+    if network.dc_opf_formulation == "angles":
+        define_passive_branch_flows(network,snapshots)
+    elif network.dc_opf_formulation == "ptdf":
+        define_passive_branch_flows_with_PTDF(network,snapshots)
 
     define_passive_branch_constraints(network,snapshots)
 
-    define_nodal_balances(network,snapshots)
+    if network.dc_opf_formulation == "angles":
+        define_nodal_balance_constraints(network,snapshots)
+    if network.dc_opf_formulation == "ptdf":
+        define_sub_network_balance_constraints(network,snapshots)
+
 
     if network.co2_limit is not None:
         define_co2_constraint(network,snapshots)

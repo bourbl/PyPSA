@@ -395,6 +395,9 @@ class Network(Basic):
     #tolerance for Newton-Raphson power flow
     nr_x_tol = 1e-6
 
+    #can only be in ["angles","ptdf"]
+    dc_opf_formulation = "ptdf"
+
     def __init__(self, csv_folder_name=None, **kwargs):
 
         super(self.__class__, self).__init__(kwargs.get("name",""))
