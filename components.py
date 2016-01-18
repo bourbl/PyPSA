@@ -395,7 +395,7 @@ class Network(Basic):
     #tolerance for Newton-Raphson power flow
     nr_x_tol = 1e-6
 
-    #can only be in ["angles","ptdf"]
+    #can only be in ["angles","cycles","ptdf"]
     lopf_formulation = "angles"
     ptdf_tolerance = 0.
 
