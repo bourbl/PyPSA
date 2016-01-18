@@ -351,10 +351,13 @@ def define_passive_branch_flows_with_PTDF(network,snapshots):
             calculate_B_H(sub_network,verbose=False)
             calculate_PTDF(sub_network,verbose=False)
 
+            #kill small PTDF values
+            sub_network.PTDF[abs(sub_network.PTDF) < network.ptdf_tolerance] = 0
+
         for i,branch in enumerate(sub_network.branches.obj):
             branch._flow = {}
             for snapshot in snapshots:
-                branch._flow[snapshot] = sum(sub_network.PTDF[i,j]*network.model.power_balance[bus_name,snapshot] for j,bus_name in enumerate(sub_network.buses_o.index))
+                branch._flow[snapshot] = sum(sub_network.PTDF[i,j]*network.model.power_balance[bus_name,snapshot] for j,bus_name in enumerate(sub_network.buses_o.index) if sub_network.PTDF[i,j] != 0)
 
     def flow(model,branch_type,branch_name,snapshot):
         branch = passive_branches.obj[branch_type,branch_name]
@@ -481,7 +484,7 @@ def extract_optimisation_results(network,snapshots):
 
             bus.p[snapshot] = sum(asset.sign*asset.p[snapshot] for asset in chain(bus.generators.obj,bus.loads.obj,bus.storage_units.obj))
 
-            if network.dc_opf_formulation == "angles":
+            if network.lopf_formulation == "angles":
                 bus.v_ang[snapshot] = network.model.voltage_angles[bus.name,snapshot].value
                 bus.marginal_price[snapshot] = network.model.dual[network.model.power_balance_constraint[bus.name,snapshot]]
 
@@ -492,7 +495,7 @@ def extract_optimisation_results(network,snapshots):
             network.buses.p.loc[snapshot,cb.bus1] -= cb.p1[snapshot]
 
 
-        if network.dc_opf_formulation == "ptdf":
+        if network.lopf_formulation == "ptdf":
             for sn in network.sub_networks.obj:
                 network.buses.v_ang.loc[snapshot,sn.slack_bus] = 0.
                 if len(sn.pvpqs) > 0:
@@ -553,16 +556,16 @@ def network_lopf(network,snapshots=None,solver_name="glpk",verbose=True):
 
     define_nodal_balances(network,snapshots)
 
-    if network.dc_opf_formulation == "angles":
+    if network.lopf_formulation == "angles":
         define_passive_branch_flows(network,snapshots)
-    elif network.dc_opf_formulation == "ptdf":
+    elif network.lopf_formulation == "ptdf":
         define_passive_branch_flows_with_PTDF(network,snapshots)
 
     define_passive_branch_constraints(network,snapshots)
 
-    if network.dc_opf_formulation == "angles":
+    if network.lopf_formulation == "angles":
         define_nodal_balance_constraints(network,snapshots)
-    if network.dc_opf_formulation == "ptdf":
+    if network.lopf_formulation == "ptdf":
         define_sub_network_balance_constraints(network,snapshots)
 
 

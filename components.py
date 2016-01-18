@@ -396,7 +396,8 @@ class Network(Basic):
     nr_x_tol = 1e-6
 
     #can only be in ["angles","ptdf"]
-    dc_opf_formulation = "ptdf"
+    lopf_formulation = "angles"
+    ptdf_tolerance = 0.
 
     def __init__(self, csv_folder_name=None, **kwargs):
 
