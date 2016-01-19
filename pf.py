@@ -657,6 +657,10 @@ def find_cycles(sub_network,verbose=True):
 
     sub_network.cycles = nx.cycle_basis(graph)
 
+    if verbose:
+        print("Sub-network %s has %d cycles." % (sub_network.name,len(sub_network.cycles)))
+
+
     sub_network.cycle_branches = []
 
     for j,cycle in enumerate(sub_network.cycles):
