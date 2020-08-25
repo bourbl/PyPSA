@@ -1,17 +1,28 @@
 ## Minimal 3-node example of PyPSA power flow using MPI for parallel execution
 
+# Additional packages mpi4py, dill
+# e.g.
+# conda install dill
+# conda install -c intel mpi4py
+
+# Execute via mpiexec, mpirun, srun etc.
+# e.g.
+# mpiexec -n 4 python MPI_example.py
+
+
 import pypsa
 import numpy as np
 
-import dill
+import logging
+logging.basicConfig(level=logging.ERROR)
 
+import dill
 from mpi4py import MPI
 MPI.pickle.__init__(dill.dumps, dill.loads)
 
 comm = MPI.COMM_WORLD
-numprocs = MPI.COMM_WORLD.Get_size()
-rank = MPI.COMM_WORLD.Get_rank()
-procname = MPI.Get_processor_name()
+numprocs = comm.Get_size()
+rank = comm.Get_rank()
 
 starttime = MPI.Wtime()
 
@@ -38,13 +49,13 @@ network.pf()
 ## optionally gather partial solutions and merge them to initial network
 #partial_networks = comm.gather(network, root=0)
 
-print('Rank:', rank, 'line flows:', network.lines_t.p0[:5], '\n')
+print('Rank:', rank, '\nLine flows:', network.lines_t.p0[:3], '\n')
 
 # writing output in parallel
-#network.export_to_netcdf("network.nc")
+#network.export_to_hdf5("network.h5")
 
 endtime = MPI.Wtime()
 
-print('Total time: {0:.2f} sec'.format(endtime-starttime, ))
+print('Total time: {0:.2f} sec\n\n'.format(endtime-starttime, ))
 
 
