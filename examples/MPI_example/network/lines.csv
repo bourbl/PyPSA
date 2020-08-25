@@ -1,0 +1,4 @@
+name,bus0,bus1,x,r
+My line 0,My bus 0,My bus 1,0.1,0.01
+My line 1,My bus 1,My bus 2,0.1,0.01
+My line 2,My bus 2,My bus 0,0.1,0.01

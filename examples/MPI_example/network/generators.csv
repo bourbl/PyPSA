@@ -1,0 +1,2 @@
+name,bus,p_set,min_up_time,min_down_time,up_time_before,down_time_before
+My gen,My bus 0,100.0,0,0,1,0
